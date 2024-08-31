@@ -8,7 +8,7 @@
 
 以下为一个示例，展示了把 LiveServer 程序添加到环境变量后预览 Vue 项目构建产物的过程
 
-https://github.com/user-attachments/assets/552cc272-9846-4dbc-a44a-a5330da874cc
+https://github.com/user-attachments/assets/be9d54e0-f8fe-4a0e-88cf-e4e84836c6ec
 
 ### 使用方法
 #### 下载

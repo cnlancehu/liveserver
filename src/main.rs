@@ -14,8 +14,14 @@ async fn main() -> Result<()> {
         Err(_) => "0.0.0.0".to_string(),
     };
     let port = get_available_port();
-    let server = HttpServer::new(|| App::new().service(Files::new("/", ".").show_files_listing()))
-        .bind((ip.clone(), port))?;
+    let server = HttpServer::new(|| {
+        App::new().service(
+            Files::new("/", ".")
+                .show_files_listing()
+                .index_file("index.html"),
+        )
+    })
+    .bind((ip.clone(), port))?;
     let url = format!("http://{}:{}", ip, port);
     open(&url);
     println!("Started at {}", &url);
