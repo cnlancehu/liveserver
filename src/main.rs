@@ -3,6 +3,7 @@ use crate::open_explorer::open;
 
 use actix_files::Files;
 use actix_web::{App, HttpServer};
+use qrcode::QrCode;
 
 use std::{io::Result, net::IpAddr};
 
@@ -25,6 +26,17 @@ async fn main() -> Result<()> {
     let url = format!("http://{}:{}", ip, port);
     open(&url);
     println!("Started at {}", &url);
+    match QrCode::new(&url) {
+        Ok(code) => {
+            let code_string = code
+                .render::<char>()
+                .quiet_zone(false)
+                .module_dimensions(2, 1)
+                .build();
+            println!("{}", code_string);
+        }
+        Err(_) => (),
+    };
     server.run().await
 }
 
