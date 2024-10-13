@@ -19,13 +19,13 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4.1.7
+        uses: actions/checkout@v4
       - name: Build
         run: |
           pip install requests
           python build.py ${{ github.event.inputs.version }} ${{ secrets.UPLOAD_SECRET }}
       - name: Upload
-        uses: actions/upload-artifact@v4.3.6
+        uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.os }}-artifact
           path: dist/*
@@ -39,7 +39,7 @@ jobs:
           path: dist
           merge-multiple: true
       - name: Release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
           files: dist/*
           name: ${{ github.event.inputs.version }}
