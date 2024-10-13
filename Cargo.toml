@@ -6,7 +6,15 @@ edition = "2021"
 [dependencies]
 actix-files = "0"
 actix-web = "4"
+chrono = "0"
+futures = "0"
+lazy_static = "1"
+mime_guess = "2"
 qrcode = "0"
+serde = { version = "1", features = ["derive"] }
+tera = "1"
+tokio = { version = "1", features = ["full"] }
+walkdir = "2"
 
 [profile.release]
 panic = "abort"
