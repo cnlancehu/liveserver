@@ -1,7 +1,14 @@
 mod open_explorer;
 use crate::open_explorer::open;
 
-use actix_web::{get, http::StatusCode, web, App, HttpResponse, HttpServer, Responder};
+use actix_web::{
+    get,
+    http::{
+        header::{self, DispositionParam, DispositionType},
+        StatusCode,
+    },
+    web, App, HttpResponse, HttpServer, Responder,
+};
 use chrono::{FixedOffset, TimeZone, Utc};
 use futures::stream::{self};
 use mime_guess::mime::{CSS, HTML, IMAGE, JAVASCRIPT, JSON, TEXT, XML};
@@ -16,7 +23,7 @@ use walkdir::WalkDir;
 
 use std::{
     cmp::Ordering,
-    env::{self, current_dir},
+    env,
     io::{ErrorKind, Result},
     net::IpAddr,
     path::PathBuf,
@@ -30,6 +37,7 @@ lazy_static::lazy_static! {
             .expect("Failed to add index.html template");
         tera
     };
+    static ref current_dir: PathBuf = env::current_dir().unwrap();
 }
 
 #[derive(Serialize, Debug)]
@@ -69,21 +77,25 @@ async fn main() -> Result<()> {
 
 #[get("/{url:.*}")]
 async fn handler(path: web::Path<String>) -> impl Responder {
-    let path = env::current_dir().unwrap().join(&*path);
+    let path = current_dir.join(&*path);
     if !path.exists() {
         return error_message(ErrorKind::NotFound);
-    }
+    };
     if path.is_dir() {
-        return dir_handler(path).await;
+        dir_handler(path).await
     } else if path.is_file() {
-        return file_handler(path).await;
+        file_handler(path).await
     } else {
-        HttpResponse::Ok().body("Not supported")
+        error_message(ErrorKind::Unsupported)
     }
 }
 
 async fn dir_handler(path: PathBuf) -> HttpResponse {
-    let current_path = &path.strip_prefix(&current_dir().unwrap()).unwrap();
+    let stripped_path = match path.strip_prefix(&*current_dir) {
+        Ok(path) => path,
+        Err(_) => return error_message(ErrorKind::PermissionDenied),
+    };
+    let current_path = stripped_path;
 
     let dir = WalkDir::new(&path)
         .max_depth(1)
@@ -100,13 +112,21 @@ async fn dir_handler(path: PathBuf) -> HttpResponse {
             }
         });
     let mut children: Vec<IndexChild> = Vec::new();
-    if path != PathBuf::from(current_dir().unwrap()) {
+    if path != PathBuf::from(current_dir.clone()) {
         children.push(IndexChild {
             name: "Go Back".to_string(),
             file_type: "back".to_string(),
             last_modified: "".to_string(),
             size: "".to_string(),
-            path: "..".to_string(),
+            path: format!(
+                "/{}",
+                path.parent()
+                    .unwrap()
+                    .strip_prefix(&*current_dir)
+                    .unwrap()
+                    .to_string_lossy()
+                    .to_string()
+            ),
         });
     }
     for entry in dir {
@@ -150,12 +170,15 @@ async fn dir_handler(path: PathBuf) -> HttpResponse {
                 } else {
                     "".to_string()
                 };
-                let path = entry
-                    .path()
-                    .strip_prefix(&current_dir().unwrap())
-                    .unwrap()
-                    .to_string_lossy()
-                    .to_string();
+                let path = format!(
+                    "/{}",
+                    entry
+                        .path()
+                        .strip_prefix(&*current_dir)
+                        .unwrap()
+                        .to_string_lossy()
+                        .to_string()
+                );
 
                 children.push(IndexChild {
                     name,
@@ -211,6 +234,15 @@ async fn file_handler(path: PathBuf) -> HttpResponse {
         }
     );
     response.content_type(mime);
+    if let Some(file_name) = path.file_name().and_then(|name| name.to_str()) {
+        response.append_header(header::ContentDisposition {
+            disposition: DispositionType::Inline,
+            parameters: vec![DispositionParam::Filename(file_name.to_string())],
+        });
+    }
+    if let Ok(metadata) = path.metadata() {
+        response.append_header(header::ContentLength(metadata.len() as usize));
+    }
     response.streaming(file_stream)
 }
 
