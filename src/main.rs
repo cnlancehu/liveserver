@@ -10,15 +10,17 @@ use actix_web::{
     web, App, HttpResponse, HttpServer, Responder,
 };
 use chrono::{FixedOffset, TimeZone, Utc};
+use colored::Colorize;
 use futures::stream::{self};
 use mime_guess::mime::{CSS, HTML, IMAGE, JAVASCRIPT, JSON, TEXT, XML};
-use qrcode::QrCode;
+use qrcode::{Color, QrCode};
 use serde::Serialize;
 use tera::{Context, Tera};
 use tokio::{
     fs::File,
     io::{self, AsyncReadExt},
 };
+use unicode_width::UnicodeWidthStr;
 use walkdir::WalkDir;
 
 use std::{
@@ -51,28 +53,147 @@ struct IndexChild {
 
 #[actix_web::main]
 async fn main() -> Result<()> {
-    println!("Live Server");
     let ip = match get_local_ip() {
         Ok(ip) => ip.to_string(),
         Err(_) => "0.0.0.0".to_string(),
     };
-    let port = get_available_port();
-    let server = HttpServer::new(|| App::new().service(handler)).bind((ip.clone(), port))?;
+    let mut port: u16 = 5437;
+    let server = loop {
+        let server = HttpServer::new(|| App::new().service(handler));
+        match server.bind(format!("{}:{}", ip, port)) {
+            Ok(server) => break server,
+            Err(_) => {
+                port = get_available_port();
+            }
+        }
+    };
     let url = format!("http://{}:{}", ip, port);
     open(&url);
-    println!("Started at {}", &url);
-    match QrCode::new(&url) {
-        Ok(code) => {
-            let code_string = code
-                .render::<char>()
-                .quiet_zone(false)
-                .module_dimensions(2, 1)
-                .build();
-            println!("{}", code_string);
-        }
-        Err(_) => (),
-    };
+    echo_renderer(url.clone());
     server.run().await
+}
+
+fn echo_renderer(url: String) {
+    let code = QrCode::new(&url).unwrap();
+    let width = code.width();
+    let colors: Vec<Vec<qrcode::Color>> = code
+        .into_colors()
+        .chunks(width)
+        .map(|x| x.to_vec())
+        .collect();
+
+    let output: Vec<String> = colors
+        .chunks(2)
+        .map(|chunk| {
+            let (line1, line2) = match chunk {
+                [line1, line2] => (line1, Some(line2)),
+                [line1] => (line1, None),
+                _ => unreachable!(),
+            };
+
+            let mut line = String::new();
+            let line_len = line1.len();
+
+            for i in 0..line_len {
+                match line2 {
+                    Some(line2) => {
+                        if line1[i] == line2[i] {
+                            line.push(match line1[i] {
+                                Color::Light => ' ',
+                                Color::Dark => '█',
+                            });
+                        } else {
+                            line.push(match (line1[i], line2[i]) {
+                                (Color::Light, Color::Dark) => '▄',
+                                (Color::Dark, Color::Light) => '▀',
+                                _ => ' ',
+                            });
+                        }
+                    }
+                    None => line.push(match line1[i] {
+                        Color::Light => ' ',
+                        Color::Dark => '▀',
+                    }),
+                }
+            }
+            line
+        })
+        .collect();
+
+    let height = output.len() as u16;
+    let term_width = termsize::get().map(|size| size.cols).unwrap_or(80);
+
+    let logo = r" _     _           ____ 
+| |   (_)_   _____/ ___|  ___ _ ____   _____ _ __ 
+| |   | \ \ / / _ \___ \ / _ \ '__\ \ / / _ \ '__| 
+| |___| |\ V /  __/___) |  __/ |   \ V /  __/ | 
+|_____|_| \_/ \___|____/ \___|_|    \_/ \___|_| ";
+
+    let mut logo_lines: Vec<String> = logo.lines().map(|line| line.to_string()).collect();
+    logo_lines.push("".to_string());
+    logo_lines.push(
+        format!("Started at {}", &url)
+            .bright_yellow()
+            .bold()
+            .to_string(),
+    );
+    logo_lines.push(
+        "Scan the QR Code to access on mobile devices"
+            .bright_purple()
+            .bold()
+            .to_string(),
+    );
+
+    let normal_output_width = width as usize
+        + 4
+        + logo_lines
+            .iter()
+            .map(|line| line.width())
+            .max()
+            .unwrap_or(0);
+
+    let simple_output = vec![
+        "Live Server".bright_green().bold().to_string(),
+        format!("Started at {}", &url)
+            .bright_yellow()
+            .bold()
+            .to_string(),
+        "Scan the QR Code to access on mobile devices"
+            .bright_purple()
+            .bold()
+            .to_string(),
+    ];
+
+    if term_width < width as u16 || term_width <= normal_output_width as u16 {
+        for line in &simple_output {
+            println!("{}", line);
+        }
+        for line in &output {
+            println!("{}", line);
+        }
+        return;
+    }
+
+    let logo_height = logo_lines.len() as u16;
+    let offset = ((height - logo_height) / 2) as usize;
+
+    for i in 0..height as usize {
+        if i < offset || i >= offset + logo_lines.len() {
+            println!("{}", output[i]);
+        } else {
+            let logo_index = i - offset;
+            if logo_index < logo_lines.len() {
+                println!(
+                    "{} {} {}",
+                    output[i],
+                    "|".bright_cyan().bold(),
+                    logo_lines[logo_index].bright_green().bold()
+                );
+            } else {
+                println!("{}", output[i]);
+            }
+        }
+    }
 }
 
 #[get("/{url:.*}")]

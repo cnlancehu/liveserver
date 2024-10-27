@@ -8,7 +8,7 @@
 
 以下为一个示例，展示了把 LiveServer 程序添加到环境变量后预览 Vue 项目构建产物的过程
 
-https://github.com/user-attachments/assets/be9d54e0-f8fe-4a0e-88cf-e4e84836c6ec
+https://github.com/user-attachments/assets/e1d9cfdf-dbab-46e2-80a3-e7d5f6ec4e5e
 
 ### 使用方法
 #### 下载
@@ -21,3 +21,10 @@ https://github.com/user-attachments/assets/be9d54e0-f8fe-4a0e-88cf-e4e84836c6ec
 解压文件，然后添加到系统环境变量
 
 之后，你就能随时随地地运行 `liveserver` 以启动服务器
+
+### 屏幕截图
+命令行界面
+![Cli](https://github.com/user-attachments/assets/0a63da29-f4e1-4ba4-b21b-c262d3879f6b)
+
+网页文件列表UI
+![WebUI](https://github.com/user-attachments/assets/f2c24967-17f5-486e-abc6-452421ebf2cc)
