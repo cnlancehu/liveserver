@@ -27,4 +27,4 @@ https://github.com/user-attachments/assets/e1d9cfdf-dbab-46e2-80a3-e7d5f6ec4e5e
 ![Cli](https://github.com/user-attachments/assets/0a63da29-f4e1-4ba4-b21b-c262d3879f6b)
 
 网页文件列表UI
-![WebUI](https://github.com/user-attachments/assets/f2c24967-17f5-486e-abc6-452421ebf2cc)
+![WebUI](https://github.com/user-attachments/assets/7db519d7-49aa-4843-ac9a-52ea159345c1)

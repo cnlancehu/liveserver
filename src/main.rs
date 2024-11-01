@@ -7,7 +7,7 @@ use actix_web::{
         header::{self, DispositionParam, DispositionType},
         StatusCode,
     },
-    web, App, HttpResponse, HttpServer, Responder,
+    web, App, HttpRequest, HttpResponse, HttpServer, Responder,
 };
 use chrono::{FixedOffset, TimeZone, Utc};
 use colored::Colorize;
@@ -49,6 +49,7 @@ struct IndexChild {
     last_modified: String,
     size: String,
     path: String,
+    download_link: String,
 }
 
 #[actix_web::main]
@@ -74,6 +75,11 @@ async fn main() -> Result<()> {
 }
 
 fn echo_renderer(url: String) {
+    #[cfg(windows)]
+    {
+        let _ = colored::control::set_virtual_terminal(true);
+    }
+
     let code = QrCode::new(&url).unwrap();
     let width = code.width();
     let colors: Vec<Vec<qrcode::Color>> = code
@@ -82,7 +88,7 @@ fn echo_renderer(url: String) {
         .map(|x| x.to_vec())
         .collect();
 
-    let output: Vec<String> = colors
+    let mut output: Vec<String> = colors
         .chunks(2)
         .map(|chunk| {
             let (line1, line2) = match chunk {
@@ -175,6 +181,19 @@ fn echo_renderer(url: String) {
     }
 
     let logo_height = logo_lines.len() as u16;
+
+    if height < logo_height {
+        let diff = logo_height - height;
+        let diff_up = diff / 2;
+        let diff_down = diff - diff_up;
+
+        let diff_up = vec![" ".repeat(width); diff_up as usize];
+        let mut diff_down = vec![" ".repeat(width); diff_down as usize];
+        output.append(&mut diff_down);
+        output.splice(0..0, diff_up);
+    }
+
+    let height = output.len() as u16;
     let offset = ((height - logo_height) / 2) as usize;
 
     for i in 0..height as usize {
@@ -197,21 +216,21 @@ fn echo_renderer(url: String) {
 }
 
 #[get("/{url:.*}")]
-async fn handler(path: web::Path<String>) -> impl Responder {
+async fn handler(path: web::Path<String>, req: HttpRequest) -> impl Responder {
     let path = current_dir.join(&*path);
     if !path.exists() {
         return error_message(ErrorKind::NotFound);
     };
     if path.is_dir() {
-        dir_handler(path).await
+        dir_handler(path, &req).await
     } else if path.is_file() {
-        file_handler(path).await
+        file_handler(path, &req).await
     } else {
         error_message(ErrorKind::Unsupported)
     }
 }
 
-async fn dir_handler(path: PathBuf) -> HttpResponse {
+async fn dir_handler(path: PathBuf, req: &HttpRequest) -> HttpResponse {
     let stripped_path = match path.strip_prefix(&*current_dir) {
         Ok(path) => path,
         Err(_) => return error_message(ErrorKind::PermissionDenied),
@@ -248,6 +267,7 @@ async fn dir_handler(path: PathBuf) -> HttpResponse {
                     .to_string_lossy()
                     .to_string()
             ),
+            download_link: "".to_string(),
         });
     }
     for entry in dir {
@@ -255,7 +275,7 @@ async fn dir_handler(path: PathBuf) -> HttpResponse {
             Ok(entry) => {
                 let name = if let Some(name) = entry.file_name().to_str() {
                     if ["index.html", "index.htm"].contains(&name) {
-                        return file_handler(entry.path().to_path_buf()).await;
+                        return file_handler(entry.path().to_path_buf(), &req).await;
                     };
                     name.to_string()
                 } else {
@@ -269,7 +289,19 @@ async fn dir_handler(path: PathBuf) -> HttpResponse {
                 } else {
                     "".to_string()
                 };
+                let path = format!(
+                    "/{}",
+                    entry
+                        .path()
+                        .strip_prefix(&*current_dir)
+                        .unwrap()
+                        .to_string_lossy()
+                        .to_string()
+                );
+                let mut download_link = format!("{}?download", &path);
+
                 let file_type = if file_type.is_dir() {
+                    download_link = "".to_string();
                     "folder".to_string()
                 } else if file_type.is_file() {
                     if let Some(mime) = mime_guess::from_path(entry.path()).first() {
@@ -291,15 +323,6 @@ async fn dir_handler(path: PathBuf) -> HttpResponse {
                 } else {
                     "".to_string()
                 };
-                let path = format!(
-                    "/{}",
-                    entry
-                        .path()
-                        .strip_prefix(&*current_dir)
-                        .unwrap()
-                        .to_string_lossy()
-                        .to_string()
-                );
 
                 children.push(IndexChild {
                     name,
@@ -307,6 +330,7 @@ async fn dir_handler(path: PathBuf) -> HttpResponse {
                     last_modified,
                     size,
                     path,
+                    download_link,
                 });
             }
             Err(_) => (),
@@ -322,7 +346,9 @@ async fn dir_handler(path: PathBuf) -> HttpResponse {
     }
 }
 
-async fn file_handler(path: PathBuf) -> HttpResponse {
+async fn file_handler(path: PathBuf, req: &HttpRequest) -> HttpResponse {
+    let download = req.query_string() == "download";
+
     let file = match File::open(&path).await {
         Ok(file) => file,
         Err(e) => {
@@ -357,7 +383,11 @@ async fn file_handler(path: PathBuf) -> HttpResponse {
     response.content_type(mime);
     if let Some(file_name) = path.file_name().and_then(|name| name.to_str()) {
         response.append_header(header::ContentDisposition {
-            disposition: DispositionType::Inline,
+            disposition: if download {
+                DispositionType::Attachment
+            } else {
+                DispositionType::Inline
+            },
             parameters: vec![DispositionParam::Filename(file_name.to_string())],
         });
     }

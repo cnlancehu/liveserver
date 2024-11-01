@@ -1,34 +1,38 @@
-use std::env::{self, consts::OS};
 use std::process::Command;
 
+#[cfg(target_os = "windows")]
 pub fn open(url: &str) {
-    let mut cmd = match OS {
-        "windows" => {
-            let mut command = Command::new("rundll32");
-            command.arg("url.dll,FileProtocolHandler").arg(url);
-            command
-        }
-        "linux" => {
-            // if termux then return
-            match env::var("PREFIX") {
-                Ok(env) => {
-                    if env == "/data/data/com.termux/files/usr" {
-                        return;
-                    }
-                }
-                Err(_) => (),
-            }
+    let mut command = Command::new("rundll32");
+    command.arg("url.dll,FileProtocolHandler").arg(url);
+    let _ = command.spawn();
+}
 
-            let mut command = Command::new("xdg-open");
-            command.arg(url);
-            command
+#[cfg(target_os = "linux")]
+pub fn open(url: &str) {
+    use std::env;
+    // if termux then return
+    match env::var("PREFIX") {
+        Ok(env) => {
+            if env == "/data/data/com.termux/files/usr" {
+                return;
+            }
         }
-        "macos" => {
-            let mut command = Command::new("open");
-            command.arg(url);
-            command
-        }
-        _ => return,
-    };
-    let _ = cmd.spawn();
+        Err(_) => (),
+    }
+
+    let mut command = Command::new("xdg-open");
+    command.arg(url);
+    let _ = command.spawn();
+}
+
+#[cfg(target_os = "macos")]
+pub fn open(url: &str) {
+    let mut command = Command::new("open");
+    command.arg(url);
+    let _ = command.spawn();
+}
+
+#[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
+pub fn open(_url: &str) {
+    // Do nothing for unsupported OS
 }
