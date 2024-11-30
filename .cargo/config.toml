@@ -1,0 +1,15 @@
+[target.aarch64-unknown-linux-gnu]
+linker = "aarch64-linux-gnu-gcc"
+
+[target.i686-unknown-linux-gnu]
+linker = "i686-linux-gnu-gcc"
+
+# What below is for self use, not necessary for you
+# [target.aarch64-linux-android]
+# ar = "D:\\soft\\android\\sdk\\ndk\\28.0.12433566\\toolchains\\llvm\\prebuilt\\windows-x86_64\\bin\\llvm-ar.exe"
+# linker = "D:\\soft\\android\\sdk\\ndk\\28.0.12433566\\toolchains\\llvm\\prebuilt\\windows-x86_64\\bin\\aarch64-linux-android27-clang.cmd"
+
+# [env]
+# ANDROID_NDK_ROOT = "D:\\soft\\android\\sdk\\ndk\\28.0.12433566"
+# ANDROID_NDK_HOME = "D:\\soft\\android\\sdk\\ndk\\28.0.12433566"
+# CFLAGS_aarch64-linux-android = "--sysroot=D:\\soft\\android\\sdk\\ndk\\28.0.12433566\\toolchains\\llvm\\prebuilt\\windows-x86_64\\sysroot -D__ANDROID_API__=27"
