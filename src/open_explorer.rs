@@ -1,7 +1,7 @@
-use std::process::Command;
-
 #[cfg(target_os = "windows")]
 pub fn open(url: &str) {
+    use std::process::Command;
+    
     let mut command = Command::new("rundll32");
     command.arg("url.dll,FileProtocolHandler").arg(url);
     let _ = command.spawn();
@@ -9,7 +9,9 @@ pub fn open(url: &str) {
 
 #[cfg(target_os = "linux")]
 pub fn open(url: &str) {
+    use std::process::Command;
     use std::env;
+
     // if termux then return
     match env::var("PREFIX") {
         Ok(env) => {
@@ -27,6 +29,8 @@ pub fn open(url: &str) {
 
 #[cfg(target_os = "macos")]
 pub fn open(url: &str) {
+    use std::process::Command;
+
     let mut command = Command::new("open");
     command.arg(url);
     let _ = command.spawn();

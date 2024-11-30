@@ -35,8 +35,10 @@ use std::{
 lazy_static::lazy_static! {
     static ref tmpl: Tera = {
         let mut tera = Tera::default();
-        tera.add_raw_template("index.html", include_str!("../index.html.tera"))
+        tera.add_raw_template("filelist.html", include_str!("../templates/filelist.html"))
             .expect("Failed to add index.html template");
+        tera.add_raw_template("error.html", include_str!("../templates/error.html"))
+            .expect("Failed to add error.html template");
         tera
     };
     static ref current_dir: PathBuf = env::current_dir().unwrap();
@@ -135,20 +137,33 @@ fn echo_renderer(url: String) {
 | |___| |\ V /  __/___) |  __/ |   \ V /  __/ | 
 |_____|_| \_/ \___|____/ \___|_|    \_/ \___|_| ";
 
-    let mut logo_lines: Vec<String> = logo.lines().map(|line| line.to_string()).collect();
-    logo_lines.push("".to_string());
-    logo_lines.push(
-        format!("Started at {}", &url)
-            .bright_yellow()
-            .bold()
-            .to_string(),
-    );
-    logo_lines.push(
-        "Scan the QR Code to access on mobile devices"
-            .bright_purple()
-            .bold()
-            .to_string(),
-    );
+    let mut logo_lines: Vec<&str> = logo.lines().map(|line| line).collect();
+    let tip1 = format!("Started at {}", &url)
+        .bright_yellow()
+        .bold()
+        .to_string();
+    let tip2 = {
+        let s = format!("{}", &current_dir.to_string_lossy());
+        let s = if s.len() > 30 {
+            let left = &s[..15];
+            let right = &s[s.len() - 15..];
+            format!("{}..{}", left, right)
+        } else {
+            s
+        };
+        format!("Showing index of {}", s)
+    }
+    .bright_cyan()
+    .bold()
+    .to_string();
+    let tip3 = "Scan the QR Code to access on mobile devices"
+        .bright_purple()
+        .bold()
+        .to_string();
+    logo_lines.push("");
+    logo_lines.push(&tip1);
+    logo_lines.push(&tip2);
+    logo_lines.push(&tip3);
 
     let normal_output_width = width as usize
         + 4
@@ -158,17 +173,7 @@ fn echo_renderer(url: String) {
             .max()
             .unwrap_or(0);
 
-    let simple_output = vec![
-        "Live Server".bright_green().bold().to_string(),
-        format!("Started at {}", &url)
-            .bright_yellow()
-            .bold()
-            .to_string(),
-        "Scan the QR Code to access on mobile devices"
-            .bright_purple()
-            .bold()
-            .to_string(),
-    ];
+    let simple_output = vec![&tip1, &tip2, &tip3];
 
     if term_width < width as u16 || term_width <= normal_output_width as u16 {
         for line in &simple_output {
@@ -218,15 +223,10 @@ fn echo_renderer(url: String) {
 #[get("/{url:.*}")]
 async fn handler(path: web::Path<String>, req: HttpRequest) -> impl Responder {
     let path = current_dir.join(&*path);
-    if !path.exists() {
-        return error_message(ErrorKind::NotFound);
-    };
     if path.is_dir() {
         dir_handler(path, &req).await
-    } else if path.is_file() {
-        file_handler(path, &req).await
     } else {
-        error_message(ErrorKind::Unsupported)
+        file_handler(path, &req).await
     }
 }
 
@@ -340,7 +340,7 @@ async fn dir_handler(path: PathBuf, req: &HttpRequest) -> HttpResponse {
     ctx.insert("files", &children);
     ctx.insert("path", &current_path.to_string_lossy().to_string());
 
-    match tmpl.render("index.html", &ctx) {
+    match tmpl.render("filelist.html", &ctx) {
         Ok(rendered) => HttpResponse::Ok().content_type("text/html").body(rendered),
         Err(_) => HttpResponse::InternalServerError().body("Error rendering template"),
     }
@@ -348,10 +348,42 @@ async fn dir_handler(path: PathBuf, req: &HttpRequest) -> HttpResponse {
 
 async fn file_handler(path: PathBuf, req: &HttpRequest) -> HttpResponse {
     let download = req.query_string() == "download";
+    if !path.starts_with(&*current_dir) {
+        return error_message(ErrorKind::PermissionDenied);
+    }
 
     let file = match File::open(&path).await {
         Ok(file) => file,
         Err(e) => {
+            if e.kind() == ErrorKind::NotFound {
+                let dir_path = match path.parent() {
+                    Some(dir) => dir,
+                    None => return error_message(e.kind()),
+                };
+                let dir = WalkDir::new(dir_path).max_depth(1).min_depth(1);
+                for entry in dir {
+                    match entry {
+                        Ok(entry) => {
+                            let file_name = entry.file_name().to_string_lossy().to_lowercase();
+                            let search = match path.file_name() {
+                                Some(name) => name.to_string_lossy().to_lowercase(),
+                                None => return error_message(e.kind()),
+                            };
+                            if file_name.starts_with(&search) {
+                                let path = match entry.path().strip_prefix(&*current_dir) {
+                                    Ok(p) => p,
+                                    Err(_) => return error_message(e.kind()),
+                                };
+                                let redirect_path = format!("/{}", path.to_string_lossy());
+                                return HttpResponse::MovedPermanently()
+                                    .append_header(("Location", redirect_path))
+                                    .finish();
+                            }
+                        }
+                        Err(_) => continue,
+                    }
+                }
+            }
             return error_message(e.kind());
         }
     };
@@ -463,5 +495,11 @@ fn error_message(e: ErrorKind) -> HttpResponse {
         ErrorKind::Other => ("Other Error", 500),
         _ => ("Unknown Error", 500),
     };
-    HttpResponse::build(StatusCode::from_u16(status.1).unwrap()).body(status.0)
+    let mut response = HttpResponse::build(StatusCode::from_u16(status.1).unwrap());
+    let mut ctx = Context::new();
+    ctx.insert("error", status.0);
+    match tmpl.render("error.html", &ctx) {
+        Ok(rendered) => response.content_type("text/html").body(rendered),
+        Err(_) => response.body(status.0),
+    }
 }

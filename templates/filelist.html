@@ -11,17 +11,15 @@
     <h1>Live Server</h1>
     <h2>Index of /{{ path }}</h2>
     <div class="outer-box">
-        {% for file in files %}
-        <div class="row">
+        {% for file in files %}<div class="row">
             <a href="{{ file.path }}" class="{{ file.file_type }}">{{ file.name }}</a>
             <div>{{ file.last_modified }}</div>
             <div>{{ file.size }}</div>
-            {% if file.download_link != "" %}<div><a href="{{ file.download_link }}">Download</a></div>{% else %}<div>
-            </div>{% endif %}
-        </div>
-        {% endfor %}
+            <div>{% if file.download_link != "" %}<a href="{{ file.download_link }}">Download</a>{% endif %}</div>
+        </div>{% endfor %}
     </div>
 </body>
+
 <style>
     body>hr {
         display: none;
