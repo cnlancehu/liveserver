@@ -137,7 +137,7 @@ fn echo_renderer(url: String) {
 | |___| |\ V /  __/___) |  __/ |   \ V /  __/ | 
 |_____|_| \_/ \___|____/ \___|_|    \_/ \___|_| ";
 
-    let mut logo_lines: Vec<&str> = logo.lines().map(|line| line).collect();
+    let mut logo_lines: Vec<&str> = logo.lines().collect();
     let tip1 = format!("Started at {}", &url)
         .bright_yellow()
         .bold()
@@ -165,7 +165,7 @@ fn echo_renderer(url: String) {
     logo_lines.push(&tip2);
     logo_lines.push(&tip3);
 
-    let normal_output_width = width as usize
+    let normal_output_width = width
         + 4
         + logo_lines
             .iter()
@@ -201,20 +201,20 @@ fn echo_renderer(url: String) {
     let height = output.len() as u16;
     let offset = ((height - logo_height) / 2) as usize;
 
-    for i in 0..height as usize {
+    for (i, line) in output.iter().enumerate() {
         if i < offset || i >= offset + logo_lines.len() {
-            println!("{}", output[i]);
+            println!("{}", line);
         } else {
             let logo_index = i - offset;
             if logo_index < logo_lines.len() {
                 println!(
                     "{} {} {}",
-                    output[i],
+                    line,
                     "|".bright_cyan().bold(),
                     logo_lines[logo_index].bright_green().bold()
                 );
             } else {
-                println!("{}", output[i]);
+                println!("{}", line);
             }
         }
     }
@@ -252,7 +252,7 @@ async fn dir_handler(path: PathBuf, req: &HttpRequest) -> HttpResponse {
             }
         });
     let mut children: Vec<IndexChild> = Vec::new();
-    if path != PathBuf::from(current_dir.clone()) {
+    if path != current_dir.clone() {
         children.push(IndexChild {
             name: "Go Back".to_string(),
             file_type: "back".to_string(),
@@ -265,76 +265,69 @@ async fn dir_handler(path: PathBuf, req: &HttpRequest) -> HttpResponse {
                     .strip_prefix(&*current_dir)
                     .unwrap()
                     .to_string_lossy()
-                    .to_string()
             ),
             download_link: "".to_string(),
         });
     }
-    for entry in dir {
-        match entry {
-            Ok(entry) => {
-                let name = if let Some(name) = entry.file_name().to_str() {
-                    if ["index.html", "index.htm"].contains(&name) {
-                        return file_handler(entry.path().to_path_buf(), &req).await;
-                    };
-                    name.to_string()
-                } else {
-                    "".to_string()
-                };
-                let file_type = entry.file_type();
-                let size = if file_type.is_dir() {
-                    "".to_string()
-                } else if let Ok(metadata) = entry.metadata() {
-                    format_size(metadata.len())
-                } else {
-                    "".to_string()
-                };
-                let path = format!(
-                    "/{}",
-                    entry
-                        .path()
-                        .strip_prefix(&*current_dir)
-                        .unwrap()
-                        .to_string_lossy()
-                        .to_string()
-                );
-                let mut download_link = format!("{}?download", &path);
+    for entry in dir.into_iter().flatten() {
+        let name = if let Some(name) = entry.file_name().to_str() {
+            if ["index.html", "index.htm"].contains(&name) {
+                return file_handler(entry.path().to_path_buf(), req).await;
+            };
+            name.to_string()
+        } else {
+            "".to_string()
+        };
+        let file_type = entry.file_type();
+        let size = if file_type.is_dir() {
+            "".to_string()
+        } else if let Ok(metadata) = entry.metadata() {
+            format_size(metadata.len())
+        } else {
+            "".to_string()
+        };
+        let path = format!(
+            "/{}",
+            entry
+                .path()
+                .strip_prefix(&*current_dir)
+                .unwrap()
+                .to_string_lossy()
+        );
+        let mut download_link = format!("{}?download", &path);
 
-                let file_type = if file_type.is_dir() {
-                    download_link = "".to_string();
-                    "folder".to_string()
-                } else if file_type.is_file() {
-                    if let Some(mime) = mime_guess::from_path(entry.path()).first() {
-                        if mime.type_() == IMAGE {
-                            "image".to_string()
-                        } else if [JAVASCRIPT, CSS, HTML, XML, JSON].contains(&mime.type_()) {
-                            "lambda".to_string()
-                        } else {
-                            "file".to_string()
-                        }
-                    } else {
-                        "file".to_string()
-                    }
+        let file_type = if file_type.is_dir() {
+            download_link = "".to_string();
+            "folder".to_string()
+        } else if file_type.is_file() {
+            if let Some(mime) = mime_guess::from_path(entry.path()).first() {
+                if mime.type_() == IMAGE {
+                    "image".to_string()
+                } else if [JAVASCRIPT, CSS, HTML, XML, JSON].contains(&mime.type_()) {
+                    "lambda".to_string()
                 } else {
                     "file".to_string()
-                };
-                let last_modified = if let Ok(metadata) = entry.metadata() {
-                    format_time(metadata.modified().ok())
-                } else {
-                    "".to_string()
-                };
-
-                children.push(IndexChild {
-                    name,
-                    file_type,
-                    last_modified,
-                    size,
-                    path,
-                    download_link,
-                });
+                }
+            } else {
+                "file".to_string()
             }
-            Err(_) => (),
-        }
+        } else {
+            "file".to_string()
+        };
+        let last_modified = if let Ok(metadata) = entry.metadata() {
+            format_time(metadata.modified().ok())
+        } else {
+            "".to_string()
+        };
+
+        children.push(IndexChild {
+            name,
+            file_type,
+            last_modified,
+            size,
+            path,
+            download_link,
+        });
     }
     let mut ctx = Context::new();
     ctx.insert("files", &children);
@@ -440,7 +433,7 @@ fn format_time(time: Option<SystemTime>) -> String {
             let china_time = utc_datetime.with_timezone(&utc_plus_8);
             china_time.format("%Y-%m-%d %H:%M:%S").to_string()
         })
-        .unwrap_or_else(|| "".to_string())
+        .unwrap_or_default()
 }
 
 fn format_size(size: u64) -> String {
@@ -449,12 +442,10 @@ fn format_size(size: u64) -> String {
     let formatted_size = size as f64 / 1024.0f64.powi(index as i32);
     if index >= UNITS.len() {
         format!("{:.2} {}", size as f64 / 1024.0f64.powi(4), UNITS[4])
+    } else if formatted_size.fract() == 0.0 {
+        format!("{:.0} {}", formatted_size, UNITS[index])
     } else {
-        if formatted_size.fract() == 0.0 {
-            format!("{:.0} {}", formatted_size, UNITS[index])
-        } else {
-            format!("{:.2} {}", formatted_size, UNITS[index])
-        }
+        format!("{:.2} {}", formatted_size, UNITS[index])
     }
 }
 
