@@ -18,9 +18,9 @@ targets = {
         "aarch64-pc-windows-msvc": "windows-aarch64"
     },
     "Linux": {
+        "i686-unknown-linux-gnu": "linux-x86",
         "x86_64-unknown-linux-gnu": "linux-x86_64",
-        "aarch64-unknown-linux-gnu": "linux-aarch64",
-        "i686-unknown-linux-gnu": "linux-x86"
+        "aarch64-unknown-linux-gnu": "linux-aarch64"
     },
     "Darwin": {
         "x86_64-apple-darwin": "macos-x86_64",
@@ -35,9 +35,12 @@ os.makedirs("dist", exist_ok=True)
 
 for target, alias in targets[os_type].items():
     if os_type == "Linux":
-        subprocess.Popen(f"sudo apt update", stdout=subprocess.PIPE, text=True, shell=True).wait()
-        subprocess.Popen(f"sudo apt install gcc-aarch64-linux-gnu -y", stdout=subprocess.PIPE, text=True, shell=True).wait()
-        subprocess.Popen(f"sudo apt install gcc-i686-linux-gnu -y", stdout=subprocess.PIPE, text=True, shell=True).wait()
+        subprocess.Popen("sudo apt update", stdout=subprocess.PIPE, text=True, shell=True).wait()
+        subprocess.Popen("sudo apt install -y gcc-aarch64-linux-gnu", stdout=subprocess.PIPE, text=True, shell=True).wait()
+        subprocess.Popen("sudo apt install -y gcc-i686-linux-gnu", stdout=subprocess.PIPE, text=True, shell=True).wait()
+        subprocess.Popen("sudo apt install -y gcc-multilib g++-multilib", stdout=subprocess.PIPE, text=True, shell=True).wait()
+        subprocess.Popen("sudo apt install -y libc6-dev-i386 libstdc++-10-dev:i386", stdout=subprocess.PIPE, text=True, shell=True).wait()
+        subprocess.Popen("sudo apt install -y libm-dev:i386", stdout=subprocess.PIPE, text=True, shell=True).wait()
     subprocess.Popen(f"rustup target add {target}", stdout=subprocess.PIPE, text=True, shell=True).wait()
     subprocess.Popen(f"cargo build -r --target {target}", stdout=subprocess.PIPE, text=True, shell=True, env=os.environ).wait()
     with zipfile.ZipFile(os.path.join("dist", f"{app_name}-{alias}.zip"), "w") as zipf:
