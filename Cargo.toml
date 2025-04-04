@@ -1,13 +1,13 @@
 [package]
 name = "liveserver"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 
 [dependencies]
 actix-files = "0"
 actix-web = "4"
 chrono = "0"
-colored = { git = "https://github.com/cnlancehu/colored" }
+cnxt = "0"
 futures = "0"
 lazy_static = "1"
 mime_guess = "2"

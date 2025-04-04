@@ -9,8 +9,7 @@ pub fn open(url: &str) {
 
 #[cfg(target_os = "linux")]
 pub fn open(url: &str) {
-    use std::env;
-    use std::process::Command;
+    use std::{env, process::Command};
 
     // if termux then return
     match env::var("PREFIX") {
@@ -36,7 +35,11 @@ pub fn open(url: &str) {
     let _ = command.spawn();
 }
 
-#[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
+#[cfg(not(any(
+    target_os = "windows",
+    target_os = "linux",
+    target_os = "macos"
+)))]
 pub fn open(_url: &str) {
     // Do nothing for unsupported OS
 }

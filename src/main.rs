@@ -1,5 +1,12 @@
 mod open_explorer;
-use crate::open_explorer::open;
+use std::{
+    cmp::Ordering,
+    env,
+    io::{ErrorKind, Result},
+    net::IpAddr,
+    path::PathBuf,
+    time::SystemTime,
+};
 
 use actix_web::{
     get,
@@ -10,7 +17,7 @@ use actix_web::{
     web, App, HttpRequest, HttpResponse, HttpServer, Responder,
 };
 use chrono::{FixedOffset, TimeZone, Utc};
-use colored::Colorize;
+use cnxt::Colorize;
 use futures::stream::{self};
 use mime_guess::mime::{CSS, HTML, IMAGE, JAVASCRIPT, JSON, TEXT, XML};
 use qrcode::{Color, QrCode};
@@ -23,14 +30,7 @@ use tokio::{
 use unicode_width::UnicodeWidthStr;
 use walkdir::WalkDir;
 
-use std::{
-    cmp::Ordering,
-    env,
-    io::{ErrorKind, Result},
-    net::IpAddr,
-    path::PathBuf,
-    time::SystemTime,
-};
+use crate::open_explorer::open;
 
 lazy_static::lazy_static! {
     static ref tmpl: Tera = {
@@ -78,9 +78,7 @@ async fn main() -> Result<()> {
 
 fn echo_renderer(url: String) {
     #[cfg(windows)]
-    {
-        let _ = colored::control::set_virtual_terminal(true);
-    }
+    cnxt::control::set_virtual_terminal(true);
 
     let code = QrCode::new(&url).unwrap();
     let width = code.width();
@@ -303,7 +301,9 @@ async fn dir_handler(path: PathBuf, req: &HttpRequest) -> HttpResponse {
             if let Some(mime) = mime_guess::from_path(entry.path()).first() {
                 if mime.type_() == IMAGE {
                     "image".to_string()
-                } else if [JAVASCRIPT, CSS, HTML, XML, JSON].contains(&mime.type_()) {
+                } else if [JAVASCRIPT, CSS, HTML, XML, JSON]
+                    .contains(&mime.type_())
+                {
                     "lambda".to_string()
                 } else {
                     "file".to_string()
@@ -334,8 +334,12 @@ async fn dir_handler(path: PathBuf, req: &HttpRequest) -> HttpResponse {
     ctx.insert("path", &current_path.to_string_lossy().to_string());
 
     match tmpl.render("filelist.html", &ctx) {
-        Ok(rendered) => HttpResponse::Ok().content_type("text/html").body(rendered),
-        Err(_) => HttpResponse::InternalServerError().body("Error rendering template"),
+        Ok(rendered) => {
+            HttpResponse::Ok().content_type("text/html").body(rendered)
+        }
+        Err(_) => {
+            HttpResponse::InternalServerError().body("Error rendering template")
+        }
     }
 }
 
@@ -357,17 +361,26 @@ async fn file_handler(path: PathBuf, req: &HttpRequest) -> HttpResponse {
                 for entry in dir {
                     match entry {
                         Ok(entry) => {
-                            let file_name = entry.file_name().to_string_lossy().to_lowercase();
+                            let file_name = entry
+                                .file_name()
+                                .to_string_lossy()
+                                .to_lowercase();
                             let search = match path.file_name() {
-                                Some(name) => name.to_string_lossy().to_lowercase(),
+                                Some(name) => {
+                                    name.to_string_lossy().to_lowercase()
+                                }
                                 None => return error_message(e.kind()),
                             };
                             if file_name.starts_with(&search) {
-                                let path = match entry.path().strip_prefix(&*current_dir) {
+                                let path = match entry
+                                    .path()
+                                    .strip_prefix(&*current_dir)
+                                {
                                     Ok(p) => p,
                                     Err(_) => return error_message(e.kind()),
                                 };
-                                let redirect_path = format!("/{}", path.to_string_lossy());
+                                let redirect_path =
+                                    format!("/{}", path.to_string_lossy());
                                 return HttpResponse::MovedPermanently()
                                     .append_header(("Location", redirect_path))
                                     .finish();
@@ -486,7 +499,8 @@ fn error_message(e: ErrorKind) -> HttpResponse {
         ErrorKind::Other => ("Other Error", 500),
         _ => ("Unknown Error", 500),
     };
-    let mut response = HttpResponse::build(StatusCode::from_u16(status.1).unwrap());
+    let mut response =
+        HttpResponse::build(StatusCode::from_u16(status.1).unwrap());
     let mut ctx = Context::new();
     ctx.insert("error", status.0);
     match tmpl.render("error.html", &ctx) {
