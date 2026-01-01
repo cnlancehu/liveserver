@@ -65,7 +65,8 @@ async fn main() -> Result<()> {
     echo_renderer(url.clone());
 
     let router = Router::with_path("{*path}").get(handler);
-    Server::new(acceptor).serve(router).await;
+    let service = Service::new(router);
+    Server::new(acceptor).serve(service).await;
     Ok(())
 }
 
