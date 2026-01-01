@@ -1,21 +1,19 @@
 [package]
-name = "liveserver"
+name = "live"
 version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-actix-files = "0"
-actix-web = "4"
 chrono = "0"
-cnxt = "0"
-futures = "0"
+cnxt = "0.1.3"
 lazy_static = "1"
 mime_guess = "2"
 qrcode = "0"
-serde = { version = "1", features = ["derive"] }
+salvo = { version = "0.87.1", default-features = false, features = ["http1", "server"] }
+serde = { version = "1.0.219", features = ["derive"] }
 tera = "1"
 termsize = "0"
-tokio = { version = "1", features = ["full"] }
+tokio = { version = "1.44.2", features = ["full"] }
 unicode-width = "0"
 walkdir = "2"
 

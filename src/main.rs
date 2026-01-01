@@ -8,25 +8,13 @@ use std::{
     time::SystemTime,
 };
 
-use actix_web::{
-    get,
-    http::{
-        header::{self, DispositionParam, DispositionType},
-        StatusCode,
-    },
-    web, App, HttpRequest, HttpResponse, HttpServer, Responder,
-};
 use chrono::{FixedOffset, TimeZone, Utc};
 use cnxt::Colorize;
-use futures::stream::{self};
-use mime_guess::mime::{CSS, HTML, IMAGE, JAVASCRIPT, JSON, TEXT, XML};
+use mime_guess::mime::{self, CSS, HTML, IMAGE, JAVASCRIPT, JSON, TEXT, XML};
 use qrcode::{Color, QrCode};
+use salvo::{fs::NamedFile, http::header, prelude::*};
 use serde::Serialize;
 use tera::{Context, Tera};
-use tokio::{
-    fs::File,
-    io::{self, AsyncReadExt},
-};
 use unicode_width::UnicodeWidthStr;
 use walkdir::WalkDir;
 
@@ -54,26 +42,31 @@ struct IndexChild {
     download_link: String,
 }
 
-#[actix_web::main]
+#[tokio::main]
 async fn main() -> Result<()> {
     let ip = match get_local_ip() {
         Ok(ip) => ip.to_string(),
         Err(_) => "0.0.0.0".to_string(),
     };
     let mut port: u16 = 5437;
-    let server = loop {
-        let server = HttpServer::new(|| App::new().service(handler));
-        match server.bind(format!("{}:{}", ip, port)) {
-            Ok(server) => break server,
+
+    let acceptor = loop {
+        let addr = format!("{}:{}", ip, port);
+        match TcpListener::new(addr).try_bind().await {
+            Ok(a) => break a,
             Err(_) => {
                 port = get_available_port();
             }
         }
     };
+
     let url = format!("http://{}:{}", ip, port);
     open(&url);
     echo_renderer(url.clone());
-    server.run().await
+
+    let router = Router::with_path("<**path>").get(handler);
+    Server::new(acceptor).serve(router).await;
+    Ok(())
 }
 
 fn echo_renderer(url: String) {
@@ -82,7 +75,7 @@ fn echo_renderer(url: String) {
 
     let code = QrCode::new(&url).unwrap();
     let width = code.width();
-    let colors: Vec<Vec<qrcode::Color>> = code
+    let colors: Vec<Vec<Color>> = code
         .into_colors()
         .chunks(width)
         .map(|x| x.to_vec())
@@ -218,20 +211,24 @@ fn echo_renderer(url: String) {
     }
 }
 
-#[get("/{url:.*}")]
-async fn handler(path: web::Path<String>, req: HttpRequest) -> impl Responder {
-    let path = current_dir.join(&*path);
+#[handler]
+async fn handler(req: &mut Request, res: &mut Response) {
+    let path_param = req.param::<String>("**path").unwrap_or_default();
+    let path = current_dir.join(path_param);
     if path.is_dir() {
-        dir_handler(path, &req).await
+        dir_handler(path, req, res).await
     } else {
-        file_handler(path, &req).await
+        file_handler(path, req, res).await
     }
 }
 
-async fn dir_handler(path: PathBuf, req: &HttpRequest) -> HttpResponse {
+async fn dir_handler(path: PathBuf, req: &mut Request, res: &mut Response) {
     let stripped_path = match path.strip_prefix(&*current_dir) {
         Ok(path) => path,
-        Err(_) => return error_message(ErrorKind::PermissionDenied),
+        Err(_) => {
+            error_message(ErrorKind::PermissionDenied, res);
+            return;
+        }
     };
     let current_path = stripped_path;
 
@@ -270,7 +267,8 @@ async fn dir_handler(path: PathBuf, req: &HttpRequest) -> HttpResponse {
     for entry in dir.into_iter().flatten() {
         let name = if let Some(name) = entry.file_name().to_str() {
             if ["index.html", "index.htm"].contains(&name) {
-                return file_handler(entry.path().to_path_buf(), req).await;
+                file_handler(entry.path().to_path_buf(), req, res).await;
+                return;
             };
             name.to_string()
         } else {
@@ -335,81 +333,53 @@ async fn dir_handler(path: PathBuf, req: &HttpRequest) -> HttpResponse {
 
     match tmpl.render("filelist.html", &ctx) {
         Ok(rendered) => {
-            HttpResponse::Ok().content_type("text/html").body(rendered)
+            res.render(Text::Html(rendered));
         }
         Err(_) => {
-            HttpResponse::InternalServerError().body("Error rendering template")
+            res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
+            res.render("Error rendering template");
         }
     }
 }
 
-async fn file_handler(path: PathBuf, req: &HttpRequest) -> HttpResponse {
-    let download = req.query_string() == "download";
+async fn file_handler(path: PathBuf, req: &mut Request, res: &mut Response) {
+    let download = req.uri().query() == Some("download");
     if !path.starts_with(&*current_dir) {
-        return error_message(ErrorKind::PermissionDenied);
+        error_message(ErrorKind::PermissionDenied, res);
+        return;
     }
 
-    let file = match File::open(&path).await {
-        Ok(file) => file,
-        Err(e) => {
-            if e.kind() == ErrorKind::NotFound {
-                let dir_path = match path.parent() {
-                    Some(dir) => dir,
-                    None => return error_message(e.kind()),
-                };
-                let dir = WalkDir::new(dir_path).max_depth(1).min_depth(1);
-                for entry in dir {
-                    match entry {
-                        Ok(entry) => {
-                            let file_name = entry
-                                .file_name()
-                                .to_string_lossy()
-                                .to_lowercase();
-                            let search = match path.file_name() {
-                                Some(name) => {
-                                    name.to_string_lossy().to_lowercase()
-                                }
-                                None => return error_message(e.kind()),
-                            };
-                            if file_name.starts_with(&search) {
-                                let path = match entry
-                                    .path()
-                                    .strip_prefix(&*current_dir)
-                                {
-                                    Ok(p) => p,
-                                    Err(_) => return error_message(e.kind()),
-                                };
-                                let redirect_path =
-                                    format!("/{}", path.to_string_lossy());
-                                return HttpResponse::MovedPermanently()
-                                    .append_header(("Location", redirect_path))
-                                    .finish();
-                            }
+    if !path.exists() {
+        if let Some(parent) = path.parent() {
+            if let Ok(dir) = std::fs::read_dir(parent) {
+                let search = path
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .to_lowercase();
+                for entry in dir.flatten() {
+                    let file_name =
+                        entry.file_name().to_string_lossy().to_lowercase();
+                    if file_name.starts_with(&search) {
+                        if let Ok(p) = entry.path().strip_prefix(&*current_dir)
+                        {
+                            let redirect_path =
+                                format!("/{}", p.to_string_lossy());
+                            res.render(Redirect::found(redirect_path));
+                            return;
                         }
-                        Err(_) => continue,
                     }
                 }
             }
-            return error_message(e.kind());
         }
-    };
-    let file_stream = stream::unfold(file, move |mut file| async {
-        let chunk_size = 1024;
-        let mut buffer = vec![0; chunk_size];
-        match file.read(&mut buffer).await {
-            Ok(0) => None,
-            Ok(n) => {
-                buffer.truncate(n);
-                Some((Ok::<_, io::Error>(web::Bytes::from(buffer)), file))
-            }
-            Err(e) => Some((Err(e), file)),
-        }
-    });
+        error_message(ErrorKind::NotFound, res);
+        return;
+    }
 
-    let mut response_builder = HttpResponse::Ok();
-    let response = response_builder.keep_alive();
+    let mut builder = NamedFile::builder(&path);
+
     let mime = mime_guess::from_path(&path).first_or_octet_stream();
-    let mime = format!(
+    let mime_str = format!(
         "{}{}",
         mime.essence_str(),
         if mime.type_() == TEXT {
@@ -418,21 +388,17 @@ async fn file_handler(path: PathBuf, req: &HttpRequest) -> HttpResponse {
             ""
         }
     );
-    response.content_type(mime);
+    builder =
+        builder.content_type(mime_str.parse().unwrap_or(mime::TEXT_PLAIN));
+
     if let Some(file_name) = path.file_name().and_then(|name| name.to_str()) {
-        response.append_header(header::ContentDisposition {
-            disposition: if download {
-                DispositionType::Attachment
-            } else {
-                DispositionType::Inline
-            },
-            parameters: vec![DispositionParam::Filename(file_name.to_string())],
-        });
+        let disposition = if download { "attachment" } else { "inline" };
+        let value = format!("{}; filename=\"{}\"", disposition, file_name);
+        res.headers_mut()
+            .insert(header::CONTENT_DISPOSITION, value.parse().unwrap());
     }
-    if let Ok(metadata) = path.metadata() {
-        response.append_header(header::ContentLength(metadata.len() as usize));
-    }
-    response.streaming(file_stream)
+
+    builder.send(req.headers(), res).await;
 }
 
 fn format_time(time: Option<SystemTime>) -> String {
@@ -475,7 +441,7 @@ fn get_local_ip() -> Result<IpAddr> {
     Ok(local_ip)
 }
 
-fn error_message(e: ErrorKind) -> HttpResponse {
+fn error_message(e: ErrorKind, res: &mut Response) {
     let status = match e {
         ErrorKind::NotFound => ("Not Found", 404),
         ErrorKind::PermissionDenied => ("Permission Denied", 403),
@@ -499,12 +465,12 @@ fn error_message(e: ErrorKind) -> HttpResponse {
         ErrorKind::Other => ("Other Error", 500),
         _ => ("Unknown Error", 500),
     };
-    let mut response =
-        HttpResponse::build(StatusCode::from_u16(status.1).unwrap());
+
+    res.status_code(StatusCode::from_u16(status.1).unwrap());
     let mut ctx = Context::new();
     ctx.insert("error", status.0);
     match tmpl.render("error.html", &ctx) {
-        Ok(rendered) => response.content_type("text/html").body(rendered),
-        Err(_) => response.body(status.0),
+        Ok(rendered) => res.render(Text::Html(rendered)),
+        Err(_) => res.render(status.0),
     }
 }
