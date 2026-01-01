@@ -64,7 +64,7 @@ async fn main() -> Result<()> {
     open(&url);
     echo_renderer(url.clone());
 
-    let router = Router::with_path("<**path>").get(handler);
+    let router = Router::with_path("{*path}").get(handler);
     Server::new(acceptor).serve(router).await;
     Ok(())
 }
@@ -213,7 +213,7 @@ fn echo_renderer(url: String) {
 
 #[handler]
 async fn handler(req: &mut Request, res: &mut Response) {
-    let path_param = req.param::<String>("**path").unwrap_or_default();
+    let path_param = req.uri().path().strip_prefix("/").unwrap_or("");
     let path = current_dir.join(path_param);
     if path.is_dir() {
         dir_handler(path, req, res).await
@@ -224,7 +224,7 @@ async fn handler(req: &mut Request, res: &mut Response) {
 
 async fn dir_handler(path: PathBuf, req: &mut Request, res: &mut Response) {
     let stripped_path = match path.strip_prefix(&*current_dir) {
-        Ok(path) => path,
+        Ok(path) => path.to_path_buf(),
         Err(_) => {
             error_message(ErrorKind::PermissionDenied, res);
             return;
@@ -232,104 +232,120 @@ async fn dir_handler(path: PathBuf, req: &mut Request, res: &mut Response) {
     };
     let current_path = stripped_path;
 
-    let dir = WalkDir::new(&path)
-        .max_depth(1)
-        .min_depth(1)
-        .sort_by(|a, b| {
-            let a_type = a.file_type();
-            let b_type = b.file_type();
-            if a_type.is_dir() && !b_type.is_dir() {
-                Ordering::Less
-            } else if !a_type.is_dir() && b_type.is_dir() {
-                Ordering::Greater
+    for index_file in &["index.html", "index.htm"] {
+        let index_path = path.join(index_file);
+        if tokio::fs::try_exists(&index_path).await.unwrap_or(false) {
+            file_handler(index_path, req, res).await;
+            return;
+        }
+    }
+
+    let path_clone = path.clone();
+    let current_dir_clone = current_dir.clone();
+
+    let children = tokio::task::spawn_blocking(move || {
+        let dir = WalkDir::new(&path_clone).max_depth(1).min_depth(1).sort_by(
+            |a, b| {
+                let a_type = a.file_type();
+                let b_type = b.file_type();
+                if a_type.is_dir() && !b_type.is_dir() {
+                    Ordering::Less
+                } else if !a_type.is_dir() && b_type.is_dir() {
+                    Ordering::Greater
+                } else {
+                    a.file_name().cmp(b.file_name())
+                }
+            },
+        );
+        let mut children: Vec<IndexChild> = Vec::new();
+        if path_clone != current_dir_clone {
+            children.push(IndexChild {
+                name: "Go Back".to_string(),
+                file_type: "back".to_string(),
+                last_modified: "".to_string(),
+                size: "".to_string(),
+                path: format!(
+                    "/{}",
+                    path_clone
+                        .parent()
+                        .unwrap()
+                        .strip_prefix(&*current_dir_clone)
+                        .unwrap()
+                        .to_string_lossy()
+                        .replace("\\", "/")
+                ),
+                download_link: "".to_string(),
+            });
+        }
+        for entry in dir.into_iter().flatten() {
+            let name = if let Some(name) = entry.file_name().to_str() {
+                name.to_string()
             } else {
-                a.file_name().cmp(b.file_name())
-            }
-        });
-    let mut children: Vec<IndexChild> = Vec::new();
-    if path != current_dir.clone() {
-        children.push(IndexChild {
-            name: "Go Back".to_string(),
-            file_type: "back".to_string(),
-            last_modified: "".to_string(),
-            size: "".to_string(),
-            path: format!(
+                "".to_string()
+            };
+            let file_type = entry.file_type();
+            let size = if file_type.is_dir() {
+                "".to_string()
+            } else if let Ok(metadata) = entry.metadata() {
+                format_size(metadata.len())
+            } else {
+                "".to_string()
+            };
+            let path = format!(
                 "/{}",
-                path.parent()
-                    .unwrap()
-                    .strip_prefix(&*current_dir)
+                entry
+                    .path()
+                    .strip_prefix(&*current_dir_clone)
                     .unwrap()
                     .to_string_lossy()
-            ),
-            download_link: "".to_string(),
-        });
-    }
-    for entry in dir.into_iter().flatten() {
-        let name = if let Some(name) = entry.file_name().to_str() {
-            if ["index.html", "index.htm"].contains(&name) {
-                file_handler(entry.path().to_path_buf(), req, res).await;
-                return;
-            };
-            name.to_string()
-        } else {
-            "".to_string()
-        };
-        let file_type = entry.file_type();
-        let size = if file_type.is_dir() {
-            "".to_string()
-        } else if let Ok(metadata) = entry.metadata() {
-            format_size(metadata.len())
-        } else {
-            "".to_string()
-        };
-        let path = format!(
-            "/{}",
-            entry
-                .path()
-                .strip_prefix(&*current_dir)
-                .unwrap()
-                .to_string_lossy()
-        );
-        let mut download_link = format!("{}?download", &path);
+                    .replace("\\", "/")
+            );
+            let mut download_link = format!("{}?download", &path);
 
-        let file_type = if file_type.is_dir() {
-            download_link = "".to_string();
-            "folder".to_string()
-        } else if file_type.is_file() {
-            if let Some(mime) = mime_guess::from_path(entry.path()).first() {
-                if mime.type_() == IMAGE {
-                    "image".to_string()
-                } else if [JAVASCRIPT, CSS, HTML, XML, JSON]
-                    .contains(&mime.type_())
+            let file_type = if file_type.is_dir() {
+                download_link = "".to_string();
+                "folder".to_string()
+            } else if file_type.is_file() {
+                if let Some(mime) = mime_guess::from_path(entry.path()).first()
                 {
-                    "lambda".to_string()
+                    if mime.type_() == IMAGE {
+                        "image".to_string()
+                    } else if [JAVASCRIPT, CSS, HTML, XML, JSON]
+                        .contains(&mime.type_())
+                    {
+                        "lambda".to_string()
+                    } else {
+                        "file".to_string()
+                    }
                 } else {
                     "file".to_string()
                 }
             } else {
                 "file".to_string()
-            }
-        } else {
-            "file".to_string()
-        };
-        let last_modified = if let Ok(metadata) = entry.metadata() {
-            format_time(metadata.modified().ok())
-        } else {
-            "".to_string()
-        };
+            };
+            let last_modified = if let Ok(metadata) = entry.metadata() {
+                format_time(metadata.modified().ok())
+            } else {
+                "".to_string()
+            };
 
-        children.push(IndexChild {
-            name,
-            file_type,
-            last_modified,
-            size,
-            path,
-            download_link,
-        });
-    }
+            children.push(IndexChild {
+                name,
+                file_type,
+                last_modified,
+                size,
+                path,
+                download_link,
+            });
+        }
+        children
+    })
+    .await
+    .unwrap();
+
     let mut ctx = Context::new();
     ctx.insert("files", &children);
-    ctx.insert("path", &current_path.to_string_lossy().to_string());
+    ctx.insert("path", &current_path.to_string_lossy().replace("\\", "/"));
 
     match tmpl.render("filelist.html", &ctx) {
         Ok(rendered) => {
@@ -350,27 +366,40 @@ async fn file_handler(path: PathBuf, req: &mut Request, res: &mut Response) {
     }
 
     if !path.exists() {
-        if let Some(parent) = path.parent() {
-            if let Ok(dir) = std::fs::read_dir(parent) {
-                let search = path
-                    .file_name()
-                    .unwrap_or_default()
-                    .to_string_lossy()
-                    .to_lowercase();
-                for entry in dir.flatten() {
-                    let file_name =
-                        entry.file_name().to_string_lossy().to_lowercase();
-                    if file_name.starts_with(&search) {
-                        if let Ok(p) = entry.path().strip_prefix(&*current_dir)
-                        {
-                            let redirect_path =
-                                format!("/{}", p.to_string_lossy());
-                            res.render(Redirect::found(redirect_path));
-                            return;
+        let path_clone = path.clone();
+        let current_dir_clone = current_dir.clone();
+        let redirect_path = tokio::task::spawn_blocking(move || {
+            if let Some(parent) = path_clone.parent() {
+                if let Ok(dir) = std::fs::read_dir(parent) {
+                    let search = path_clone
+                        .file_name()
+                        .unwrap_or_default()
+                        .to_string_lossy()
+                        .to_lowercase();
+                    for entry in dir.flatten() {
+                        let file_name =
+                            entry.file_name().to_string_lossy().to_lowercase();
+                        if file_name.starts_with(&search) {
+                            if let Ok(p) =
+                                entry.path().strip_prefix(&current_dir_clone)
+                            {
+                                return Some(format!(
+                                    "/{}",
+                                    p.to_string_lossy().replace("\\", "/")
+                                ));
+                            }
                         }
                     }
                 }
             }
+            None
+        })
+        .await
+        .unwrap();
+
+        if let Some(p) = redirect_path {
+            res.render(Redirect::found(p));
+            return;
         }
         error_message(ErrorKind::NotFound, res);
         return;
